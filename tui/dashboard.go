@@ -28,6 +28,9 @@ type Dashboard struct {
 	manager       *service.Manager
 	apiClient     *service.APIClient
 	logMessages   []service.LogMessage // 缓存日志消息
+	// 新增确认对话框相关字段
+	showConfirmQuit bool
+	quitPressed     bool
 }
 
 // StatusInfo FRP 状态信息
@@ -153,9 +156,23 @@ func (m Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// m.table.SetHeight(...) // 如果需要，也调整高度
 
 	case tea.KeyMsg:
+		// 如果显示确认退出对话框，处理确认对话框的按键
+		if m.showConfirmQuit {
+			switch msg.String() {
+			case "y", "Y":
+				return m, tea.Quit
+			case "n", "N", "esc":
+				m.showConfirmQuit = false
+				return m, nil
+			}
+			// 忽略其他按键
+			return m, nil
+		}
+
 		switch {
 		case key.Matches(msg, key.NewBinding(key.WithKeys("q", "ctrl+c"))):
-			return m, tea.Quit
+			m.showConfirmQuit = true
+			return m, nil
 
 		case key.Matches(msg, key.NewBinding(key.WithKeys("tab"))):
 			m.activeTab = (m.activeTab + 1) % len(m.tabs)
@@ -317,6 +334,11 @@ func (m *Dashboard) showConfigEditor() {
 func (m Dashboard) View() string {
 	if m.width == 0 {
 		return "正在加载..."
+	}
+
+	// 如果显示确认退出对话框，渲染对话框覆盖层
+	if m.showConfirmQuit {
+		return m.renderConfirmQuitDialog()
 	}
 
 	// 如果正在显示配置编辑器，直接返回编辑器视图
@@ -507,4 +529,40 @@ func (m Dashboard) renderLogsView() string {
 	logContent := strings.Join(logLines, "\n")
 
 	return contentStyle.Render(fmt.Sprintf("实时日志 (最近 %d 条):\n\n%s", len(logLines), logContent))
+}
+
+// renderConfirmQuitDialog 渲染确认退出对话框
+func (m Dashboard) renderConfirmQuitDialog() string {
+	// 对话框样式
+	dialogStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#FF6B6B")).
+		Background(lipgloss.Color("#1A1A1A")).
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(1, 2).
+		Width(50).
+		Align(lipgloss.Center)
+
+	// 对话框内容
+	dialogContent := `确认退出
+
+您确定要退出 FRP 管理工具吗？
+
+[Y] 是的，退出
+[N] 取消
+
+按 Y 确认退出，按 N 或 ESC 取消`
+
+	dialog := dialogStyle.Render(dialogContent)
+
+	// 将对话框居中显示在屏幕上
+	if m.width > 0 && m.height > 0 {
+		// 使用lipgloss的Place函数将对话框居中
+		return lipgloss.Place(m.width, m.height,
+			lipgloss.Center, lipgloss.Center,
+			dialog,
+			lipgloss.WithWhitespaceBackground(lipgloss.Color("235")))
+	}
+
+	return dialog
 }

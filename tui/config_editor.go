@@ -51,6 +51,9 @@ type ConfigEditor struct {
 	// 文件操作
 	fileDialog FileDialog
 	showDialog bool
+
+	// 确认退出对话框
+	showConfirmQuit bool
 }
 
 // ConfigEditorState 编辑器状态
@@ -164,6 +167,9 @@ func NewConfigEditor(mode string) ConfigEditor {
 	editor.updateProxyList()
 	editor.generatePreview()
 
+	// 设置正确的初始焦点
+	(&editor).setInitialFocus()
+
 	return editor
 }
 
@@ -174,7 +180,6 @@ func createBasicInputs() []textinput.Model {
 	// 服务器地址
 	inputs[0] = textinput.New()
 	inputs[0].Placeholder = "服务器地址 (例: frp.example.com)"
-	inputs[0].Focus()
 	inputs[0].CharLimit = 100
 	inputs[0].Width = 40
 
@@ -317,13 +322,27 @@ func (m ConfigEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.proxyList.SetHeight(msg.Height - 10)
 
 	case tea.KeyMsg:
+		// 如果显示确认退出对话框，处理确认对话框的按键
+		if m.showConfirmQuit {
+			switch msg.String() {
+			case "y", "Y":
+				return m, tea.Quit
+			case "n", "N", "esc":
+				m.showConfirmQuit = false
+				return m, nil
+			}
+			// 忽略其他按键
+			return m, nil
+		}
+
 		// 全局快捷键
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "q":
 			if !m.showDialog && !m.editingProxy {
-				return m, tea.Quit
+				m.showConfirmQuit = true
+				return m, nil
 			}
 		case "x":
 			// x 键返回上级（如果不在对话框或编辑状态）
@@ -357,9 +376,15 @@ func (m ConfigEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case StateProxyList:
 			m.proxyList, cmd = m.proxyList.Update(msg)
 			cmds = append(cmds, cmd)
+		case StateBasicConfig:
+			// StateBasicConfig 的输入处理已经在 updateMainInterface 中完成
+			// 这里不需要再次调用 updateInputs
 		default:
-			cmd = m.updateInputs(msg)
-			cmds = append(cmds, cmd)
+			// 对于其他状态，如果需要输入框，才调用 updateInputs
+			if m.state == StateImportExport || m.state == StateValidation {
+				cmd = m.updateInputs(msg)
+				cmds = append(cmds, cmd)
+			}
 		}
 	}
 
@@ -445,6 +470,19 @@ func (m ConfigEditor) updateMainInterface(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		if m.state == StateTemplates {
 			return m.applyTemplate(msg.String())
+		}
+	default:
+		// 对于没有被特殊处理的按键，如果当前在基本配置状态，
+		// 则传递给当前聚焦的输入框处理（包括普通字符输入）
+		if m.state == StateBasicConfig && m.focusIndex < len(m.inputs) {
+			var cmd tea.Cmd
+			m.inputs[m.focusIndex], cmd = m.inputs[m.focusIndex].Update(msg)
+
+			// 实时更新预览
+			m.updateConfigFromInputs()
+			m.generatePreview()
+
+			return m, cmd
 		}
 	}
 
@@ -1082,6 +1120,11 @@ func (m ConfigEditor) undoLastChange() (ConfigEditor, tea.Cmd) {
 func (m ConfigEditor) View() string {
 	var b strings.Builder
 
+	// 如果显示确认退出对话框，渲染对话框覆盖层
+	if m.showConfirmQuit {
+		return m.renderConfirmQuitDialog()
+	}
+
 	// 处理文件对话框
 	if m.showDialog {
 		return m.renderFileDialog()
@@ -1558,4 +1601,58 @@ func (m ConfigEditor) deleteTemplate() (ConfigEditor, tea.Cmd) {
 	m.message = "删除模板功能开发中..."
 	m.messageType = MessageInfo
 	return m, nil
+}
+
+// renderConfirmQuitDialog 渲染确认退出对话框
+func (m ConfigEditor) renderConfirmQuitDialog() string {
+	// 对话框样式
+	dialogStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#FF6B6B")).
+		Background(lipgloss.Color("#1A1A1A")).
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(1, 2).
+		Width(50).
+		Align(lipgloss.Center)
+
+	// 对话框内容
+	dialogContent := `确认退出
+
+您确定要退出配置编辑器吗？
+
+[Y] 是的，退出
+[N] 取消
+
+按 Y 确认退出，按 N 或 ESC 取消`
+
+	dialog := dialogStyle.Render(dialogContent)
+
+	// 将对话框居中显示在屏幕上
+	if m.width > 0 && m.height > 0 {
+		// 使用lipgloss的Place函数将对话框居中
+		return lipgloss.Place(m.width, m.height,
+			lipgloss.Center, lipgloss.Center,
+			dialog,
+			lipgloss.WithWhitespaceBackground(lipgloss.Color("235")))
+	}
+
+	return dialog
+}
+
+// setInitialFocus 设置正确的初始焦点
+func (m *ConfigEditor) setInitialFocus() {
+	if m.mode == "server" {
+		m.focusIndex = 2 // 绑定端口为服务器端的第一个字段
+	} else {
+		m.focusIndex = 0 // 服务器地址为客户端的第一个字段
+	}
+
+	// 更新焦点
+	for i := range m.inputs {
+		if i == m.focusIndex {
+			m.inputs[i].Focus()
+		} else {
+			m.inputs[i].Blur()
+		}
+	}
 }
