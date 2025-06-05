@@ -1,4 +1,4 @@
-package service
+package installer
 
 import (
 	"archive/tar"

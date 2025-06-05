@@ -1,0 +1,64 @@
+# FRP 客户端最小测试配置
+serverAddr: "127.0.0.1"
+serverPort: 7000
+
+# 日志配置
+log:
+  to: "console"
+  level: "info"
+
+# 认证token（需要与服务端一致）
+# token: "your_token_here"
+
+# 代理配置
+proxies:
+  # HTTP 代理测试示例
+  - name: "test-web"
+    type: "http"
+    localIP: "127.0.0.1"
+    localPort: 8080
+    customDomains: ["test.local"]
+    
+  # HTTPS 代理示例
+  - name: "web-ssl"
+    type: "https"
+    localIP: "127.0.0.1"
+    localPort: 8443
+    customDomains: ["ssl.example.com"]
+    
+  # TCP 代理测试示例
+  - name: "test-ssh"
+    type: "tcp"
+    localIP: "127.0.0.1"
+    localPort: 22
+    remotePort: 6000
+    
+  # TCP 代理示例 - 数据库
+  - name: "mysql"
+    type: "tcp"
+    localIP: "127.0.0.1"
+    localPort: 3306
+    remotePort: 3306
+    
+  # UDP 代理示例
+  - name: "dns"
+    type: "udp"
+    localIP: "127.0.0.1"
+    localPort: 53
+    remotePort: 5353
+    
+  # STCP 代理示例（点对点）
+  - name: "secret_ssh"
+    type: "stcp"
+    secretKey: "abcdefg"
+    localIP: "127.0.0.1"
+    localPort: 22
+
+# 访问者配置（用于访问 STCP 代理）
+visitors:
+  - name: "secret_ssh_visitor"
+    type: "stcp"
+    serverName: "secret_ssh"
+    secretKey: "abcdefg"
+    bindAddr: "127.0.0.1"
+    bindPort: 9000 

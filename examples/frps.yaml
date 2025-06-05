@@ -1,0 +1,22 @@
+# FRP 服务端最小测试配置
+bindPort: 7000
+
+# Web 管理界面
+webServer:
+  addr: "127.0.0.1"
+  port: 7500
+  user: "admin"
+  password: "admin"
+
+# 日志配置
+log:
+  to: "console"
+  level: "info"
+
+# 认证令牌
+# token: "your_token_here"
+
+# 其他配置
+maxPoolCount: 5
+maxPortsPerClient: 0
+# allowPorts: "2000-3000,3001,3003,4000-50000" 
