@@ -9,6 +9,7 @@ import (
 	"github.com/mattn/go-runewidth"
 
 	"frp-cli-ui/internal/service"
+	constants "frp-cli-ui/pkg/config"
 )
 
 // dashboardTickMsg 为Dashboard特定的时钟消息类型
@@ -30,6 +31,7 @@ type MainDashboard struct {
 		TotalTraffic  string
 		LastUpdate    time.Time
 	}
+	lastProxyUpdate time.Time // 记录上次代理状态更新时间
 	showConfirmQuit bool
 	ready           bool
 }
@@ -55,12 +57,10 @@ func NewMainDashboardWithSize(width, height int) *MainDashboard {
 	tabRegistry.Register(NewDashboardTab(apiClient))
 	tabRegistry.Register(NewConfigTab())
 
-	// 创建设置标签页并设置状态回调
+	// 创建设置标签页并设置状态回调，共享同一个Manager实例
 	settingsTab := NewSettingsTab()
+	settingsTab.SetManager(manager) // 设置共享的Manager实例
 	tabRegistry.Register(settingsTab)
-
-	// 注册新的示例标签页 - 这里演示如何添加新的标签页
-	tabRegistry.Register(NewStatsTab())
 
 	dashboard := &MainDashboard{
 		width:       width,
@@ -109,6 +109,11 @@ func (m *MainDashboard) Init() tea.Cmd {
 	cmds = append(cmds, tea.Tick(time.Second, func(t time.Time) tea.Msg {
 		return dashboardTickMsg(t)
 	}))
+
+	// 立即发送一次时钟消息，触发初始状态检查
+	cmds = append(cmds, func() tea.Msg {
+		return dashboardTickMsg(time.Now())
+	})
 
 	return tea.Batch(cmds...)
 }
@@ -207,41 +212,50 @@ func (m *MainDashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case dashboardTickMsg:
 		m.statusInfo.LastUpdate = time.Time(msg)
 
-		// 更新服务状态 - 现在主要通过SettingsTab的回调更新
-		if m.manager != nil {
-			// 检查服务器状态
-			serverRunning := m.checkServerStatus()
-			if serverRunning {
-				if m.statusInfo.ServerStatus != "运行中" {
-					m.statusInfo.ServerStatus = "运行中"
-				}
-			} else {
-				if m.statusInfo.ServerStatus != "已停止" {
-					m.statusInfo.ServerStatus = "已停止"
-				}
-			}
+		// 更新服务状态 - 主要依赖API检测，避免Manager进程检测的干扰
+		previousServerStatus := m.statusInfo.ServerStatus
+		previousClientStatus := m.statusInfo.ClientStatus
 
-			// 检查客户端状态
-			clientRunning := m.checkClientStatus()
-			if clientRunning {
-				if m.statusInfo.ClientStatus != "已连接" {
-					m.statusInfo.ClientStatus = "已连接"
-				}
-			} else {
-				if m.statusInfo.ClientStatus != "未连接" {
-					m.statusInfo.ClientStatus = "未连接"
-				}
+		// 检查服务器状态（仅依赖API可达性，避免进程检测的不稳定性）
+		serverRunning := m.checkServerStatus()
+		if serverRunning {
+			if m.statusInfo.ServerStatus != "运行中" {
+				m.statusInfo.ServerStatus = "运行中"
+			}
+		} else {
+			if m.statusInfo.ServerStatus != "已停止" {
+				m.statusInfo.ServerStatus = "已停止"
 			}
 		}
 
-		// 更新代理状态
-		if m.apiClient != nil && m.statusInfo.ServerStatus == "运行中" {
-			// 获取代理列表 - 这里模拟实现
-			// 实际项目中应该调用真实的方法
-			var proxies []ProxyStatus
+		// 客户端状态直接从设置模块同步（避免在主仪表盘中进行复杂检测）
+		// 这样状态更新来源唯一，避免冲突
 
-			// 模拟获取代理列表
-			proxies = m.getProxyList()
+		// 检测状态变化，如果有变化则立即更新代理状态
+		statusChanged := (previousServerStatus != m.statusInfo.ServerStatus) ||
+			(previousClientStatus != m.statusInfo.ClientStatus)
+
+		// 更新代理状态和流量信息 - 每3秒更新一次，或状态变化时立即更新
+		currentTime := time.Time(msg)
+		shouldUpdateProxy := m.lastProxyUpdate.IsZero() ||
+			statusChanged ||
+			currentTime.Sub(m.lastProxyUpdate) >= 3*time.Second
+
+		// 特殊情况：如果服务刚启动，多给几次机会获取数据（因为API可能需要时间启动）
+		if statusChanged && m.statusInfo.ServerStatus == "运行中" && previousServerStatus == "已停止" {
+			shouldUpdateProxy = true
+		}
+
+		// 如果服务器状态是运行中但还没有代理数据，强制更新
+		if m.statusInfo.ServerStatus == "运行中" && m.statusInfo.ActiveProxies == 0 &&
+			currentTime.Sub(m.lastProxyUpdate) >= 1*time.Second {
+			shouldUpdateProxy = true
+		}
+
+		if m.apiClient != nil && shouldUpdateProxy {
+			// 无论服务器状态如何，都尝试更新代理列表
+			// 如果服务器未运行，getProxyList会返回空列表，这是正确的行为
+			proxies := m.getProxyList()
 			m.statusInfo.ActiveProxies = len(proxies)
 
 			// 更新DashboardTab中的代理列表
@@ -249,11 +263,35 @@ func (m *MainDashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				tab.UpdateProxyList(proxies)
 			}
 
-			// 获取总流量
-			if serverInfo, err := m.apiClient.GetServerInfo(); err == nil {
-				totalTraffic := serverInfo.TotalTrafficIn + serverInfo.TotalTrafficOut
-				m.statusInfo.TotalTraffic = service.FormatTraffic(totalTraffic)
+			// 只有在服务器运行时才获取流量信息
+			if m.statusInfo.ServerStatus == "运行中" {
+				if serverInfo, err := m.apiClient.GetServerInfo(); err == nil {
+					totalTraffic := serverInfo.TotalTrafficIn + serverInfo.TotalTrafficOut
+					m.statusInfo.TotalTraffic = service.FormatTraffic(totalTraffic)
+				} else {
+					// 如果获取失败，保持上一次的流量显示或显示错误状态
+					if m.statusInfo.TotalTraffic == "" {
+						m.statusInfo.TotalTraffic = "N/A"
+					}
+				}
+			} else {
+				// 服务器未运行时重置流量信息
+				m.statusInfo.TotalTraffic = "0B"
 			}
+
+			m.lastProxyUpdate = currentTime
+		} else if m.statusInfo.ServerStatus != "运行中" {
+			// 如果服务器未运行，清空代理列表和流量信息
+			m.statusInfo.ActiveProxies = 0
+			m.statusInfo.TotalTraffic = "0B"
+
+			// 清空DashboardTab中的代理列表
+			if tab, ok := m.tabRegistry.GetTabByIndex(0).(*DashboardTab); ok {
+				tab.UpdateProxyList([]ProxyStatus{})
+			}
+
+			// 重置更新时间
+			m.lastProxyUpdate = time.Time{}
 		}
 
 		cmds = append(cmds, tea.Tick(time.Second, func(t time.Time) tea.Msg {
@@ -278,35 +316,69 @@ func (m *MainDashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// 以下是模拟方法，实际项目中应替换为真实实现
+// 以下是真实的服务状态检查和代理获取方法
 
-// checkServerStatus 模拟检查服务器状态
+// checkServerStatus 检查服务器状态
 func (m *MainDashboard) checkServerStatus() bool {
-	// 这里仅用于演示，返回随机状态
-	// 实际应该调用 m.manager 的相关方法
-	return false
-}
-
-// checkClientStatus 模拟检查客户端状态
-func (m *MainDashboard) checkClientStatus() bool {
-	// 这里仅用于演示，返回随机状态
-	// 实际应该调用 m.manager 的相关方法
-	return false
-}
-
-// getProxyList 模拟获取代理列表
-func (m *MainDashboard) getProxyList() []ProxyStatus {
-	// 这里仅用于演示，返回模拟数据
-	// 实际应该调用 m.apiClient 的相关方法
-	return []ProxyStatus{
-		{
-			Name:       "示例代理",
-			Type:       "tcp",
-			LocalAddr:  "127.0.0.1:8080",
-			RemotePort: "8080",
-			Status:     "在线",
-		},
+	if m.manager == nil {
+		return false
 	}
+
+	// 检查API是否可达（更准确地反映服务器是否真正可用）
+	var isAPIReachable bool
+	if m.apiClient != nil {
+		isAPIReachable = m.apiClient.IsServerReachable()
+	}
+
+	// 修正逻辑：只有API可达时才认为服务器真正可用
+	// 这样可以检测到通过Manager启动的服务和外部启动的服务
+	return isAPIReachable
+}
+
+// 注意：客户端状态检查已移除，现在完全依赖设置模块的状态回调
+// 这样避免了多个地方检测状态造成的冲突和混乱
+
+// getProxyList 获取真实的代理列表
+func (m *MainDashboard) getProxyList() []ProxyStatus {
+	if m.apiClient == nil {
+		return []ProxyStatus{}
+	}
+
+	// 尝试从API获取代理列表
+	proxies, err := m.apiClient.GetProxyList()
+	if err != nil {
+		// API调用失败，可能是服务器还没完全启动，返回空列表但不影响状态显示
+		// 可以在这里添加调试信息（如果需要的话）
+		return []ProxyStatus{}
+	}
+
+	// 转换为UI层的ProxyStatus格式
+	var result []ProxyStatus
+	for _, proxy := range proxies {
+		status := ProxyStatus{
+			Name:   proxy.Name,
+			Type:   proxy.Conf.Type,
+			Status: proxy.Status,
+		}
+
+		// 构建本地地址（API不提供localPort信息）
+		if proxy.Conf.LocalIP != "" {
+			status.LocalAddr = proxy.Conf.LocalIP
+		} else {
+			status.LocalAddr = "N/A"
+		}
+
+		// 构建远程端口信息
+		if proxy.Conf.RemotePort > 0 {
+			status.RemotePort = fmt.Sprintf("%d", proxy.Conf.RemotePort)
+		} else {
+			status.RemotePort = "N/A"
+		}
+
+		result = append(result, status)
+	}
+
+	return result
 }
 
 // updateFocus 更新标签页焦点状态
@@ -339,7 +411,7 @@ func (m *MainDashboard) View() string {
 
 	// 使用AppLayout渲染主界面
 	m.layout.UpdateConfig(func(config *AppLayoutConfig) {
-		config.Title = "FRP 内网穿透管理工具"
+		config.Title = constants.AppName + " " + constants.AppVersion
 		config.Tabs = m.tabRegistry.GetTabTitles()
 		config.ActiveTab = m.activeTab
 		config.StatusText = fmt.Sprintf(

@@ -213,18 +213,11 @@ func CreateDefaultClientConfig() *Config {
 		},
 		Proxies: []ProxyConfig{
 			{
-				Name:          "web",
-				Type:          "http",
-				LocalIP:       "127.0.0.1",
-				LocalPort:     8080,
-				CustomDomains: []string{"www.example.com"},
-			},
-			{
 				Name:       "ssh",
 				Type:       "tcp",
 				LocalIP:    "127.0.0.1",
 				LocalPort:  22,
-				RemotePort: 2222,
+				RemotePort: 6000,
 			},
 		},
 	}
@@ -233,12 +226,11 @@ func CreateDefaultClientConfig() *Config {
 // AddProxy 添加代理配置
 func (l *Loader) AddProxy(proxy ProxyConfig) error {
 	if l.config == nil {
-		return fmt.Errorf("配置未加载")
+		return fmt.Errorf("配置尚未加载")
 	}
 
-	// 检查代理名称是否已存在
-	for _, p := range l.config.Proxies {
-		if p.Name == proxy.Name {
+	for _, existingProxy := range l.config.Proxies {
+		if existingProxy.Name == proxy.Name {
 			return fmt.Errorf("代理名称 '%s' 已存在", proxy.Name)
 		}
 	}
@@ -250,7 +242,7 @@ func (l *Loader) AddProxy(proxy ProxyConfig) error {
 // RemoveProxy 移除代理配置
 func (l *Loader) RemoveProxy(name string) error {
 	if l.config == nil {
-		return fmt.Errorf("配置未加载")
+		return fmt.Errorf("配置尚未加载")
 	}
 
 	for i, proxy := range l.config.Proxies {
@@ -260,30 +252,30 @@ func (l *Loader) RemoveProxy(name string) error {
 		}
 	}
 
-	return fmt.Errorf("代理 '%s' 不存在", name)
+	return fmt.Errorf("未找到名称为 '%s' 的代理", name)
 }
 
 // UpdateProxy 更新代理配置
 func (l *Loader) UpdateProxy(name string, newProxy ProxyConfig) error {
 	if l.config == nil {
-		return fmt.Errorf("配置未加载")
+		return fmt.Errorf("配置尚未加载")
 	}
 
 	for i, proxy := range l.config.Proxies {
 		if proxy.Name == name {
-			newProxy.Name = name // 保持名称不变
+			newProxy.Name = name
 			l.config.Proxies[i] = newProxy
 			return nil
 		}
 	}
 
-	return fmt.Errorf("代理 '%s' 不存在", name)
+	return fmt.Errorf("未找到名称为 '%s' 的代理", name)
 }
 
 // GetProxy 获取代理配置
 func (l *Loader) GetProxy(name string) (*ProxyConfig, error) {
 	if l.config == nil {
-		return nil, fmt.Errorf("配置未加载")
+		return nil, fmt.Errorf("配置尚未加载")
 	}
 
 	for _, proxy := range l.config.Proxies {
@@ -292,33 +284,27 @@ func (l *Loader) GetProxy(name string) (*ProxyConfig, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("代理 '%s' 不存在", name)
+	return nil, fmt.Errorf("未找到名称为 '%s' 的代理", name)
 }
 
 // ListProxies 列出所有代理
 func (l *Loader) ListProxies() []ProxyConfig {
 	if l.config == nil {
-		return nil
+		return []ProxyConfig{}
 	}
 	return l.config.Proxies
 }
 
 // Backup 备份配置文件
 func (l *Loader) Backup() error {
-	if _, err := os.Stat(l.configPath); os.IsNotExist(err) {
-		return fmt.Errorf("配置文件不存在，无法备份")
-	}
+	backupPath := l.configPath + ".backup." + time.Now().Format("20060102_150405")
 
-	backupPath := l.configPath + ".backup"
-
-	// 读取原文件
-	content, err := os.ReadFile(l.configPath)
+	originalData, err := os.ReadFile(l.configPath)
 	if err != nil {
-		return fmt.Errorf("读取配置文件失败: %w", err)
+		return fmt.Errorf("读取原配置文件失败: %w", err)
 	}
 
-	// 写入备份文件
-	if err := os.WriteFile(backupPath, content, 0644); err != nil {
+	if err := os.WriteFile(backupPath, originalData, 0644); err != nil {
 		return fmt.Errorf("创建备份文件失败: %w", err)
 	}
 
@@ -327,24 +313,26 @@ func (l *Loader) Backup() error {
 
 // Restore 恢复配置文件
 func (l *Loader) Restore() error {
-	backupPath := l.configPath + ".backup"
-
-	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
-		return fmt.Errorf("备份文件不存在")
+	backupPattern := l.configPath + ".backup.*"
+	matches, err := filepath.Glob(backupPattern)
+	if err != nil {
+		return fmt.Errorf("查找备份文件失败: %w", err)
 	}
 
-	// 读取备份文件
-	content, err := os.ReadFile(backupPath)
+	if len(matches) == 0 {
+		return fmt.Errorf("未找到备份文件")
+	}
+
+	latestBackup := matches[len(matches)-1]
+	backupData, err := os.ReadFile(latestBackup)
 	if err != nil {
 		return fmt.Errorf("读取备份文件失败: %w", err)
 	}
 
-	// 写入原文件
-	if err := os.WriteFile(l.configPath, content, 0644); err != nil {
+	if err := os.WriteFile(l.configPath, backupData, 0644); err != nil {
 		return fmt.Errorf("恢复配置文件失败: %w", err)
 	}
 
-	// 重新加载配置
 	_, err = l.Load()
 	return err
 }
@@ -392,19 +380,19 @@ func (l *Loader) ExportToFile(config *Config, filePath string) error {
 func (l *Loader) ImportFromFile(filePath string) (*Config, error) {
 	// 检查文件是否存在
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("配置文件不存在: %s", filePath)
+		return nil, fmt.Errorf("导入文件不存在: %s", filePath)
 	}
 
 	// 读取文件内容
 	content, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("读取配置文件失败: %w", err)
+		return nil, fmt.Errorf("读取导入文件失败: %w", err)
 	}
 
 	// 解析 YAML
 	var config Config
 	if err := yaml.Unmarshal(content, &config); err != nil {
-		return nil, fmt.Errorf("解析配置文件失败: %w", err)
+		return nil, fmt.Errorf("解析导入文件失败: %w", err)
 	}
 
 	return &config, nil
@@ -421,60 +409,62 @@ func (l *Loader) MergeConfig(target *Config, source *Config) *Config {
 
 	merged := *target
 
-	// 合并基本配置（只有目标配置为空时才设置）
-	if merged.ServerAddr == "" && source.ServerAddr != "" {
+	if source.ServerAddr != "" {
 		merged.ServerAddr = source.ServerAddr
 	}
-	if merged.ServerPort == 0 && source.ServerPort != 0 {
+	if source.ServerPort != 0 {
 		merged.ServerPort = source.ServerPort
 	}
-	if merged.BindPort == 0 && source.BindPort != 0 {
-		merged.BindPort = source.BindPort
-	}
-	if merged.Token == "" && source.Token != "" {
+	if source.Token != "" {
 		merged.Token = source.Token
 	}
 
-	// 合并 Web 服务器配置
-	if merged.WebServer.Port == 0 && source.WebServer.Port != 0 {
+	if source.BindPort != 0 {
+		merged.BindPort = source.BindPort
+	}
+	if source.BindUDPPort != 0 {
+		merged.BindUDPPort = source.BindUDPPort
+	}
+	if source.KCPBindPort != 0 {
+		merged.KCPBindPort = source.KCPBindPort
+	}
+
+	if source.WebServer.Port != 0 {
 		merged.WebServer.Port = source.WebServer.Port
 	}
-	if merged.WebServer.User == "" && source.WebServer.User != "" {
+	if source.WebServer.User != "" {
 		merged.WebServer.User = source.WebServer.User
 	}
-	if merged.WebServer.Password == "" && source.WebServer.Password != "" {
+	if source.WebServer.Password != "" {
 		merged.WebServer.Password = source.WebServer.Password
 	}
 
-	// 合并日志配置
-	if merged.Log.Level == "" && source.Log.Level != "" {
+	if source.Log.Level != "" {
 		merged.Log.Level = source.Log.Level
 	}
-	if merged.Log.To == "" && source.Log.To != "" {
+	if source.Log.To != "" {
 		merged.Log.To = source.Log.To
 	}
 
-	// 合并代理配置（避免重复）
-	existingProxyNames := make(map[string]bool)
+	proxyMap := make(map[string]bool)
 	for _, proxy := range merged.Proxies {
-		existingProxyNames[proxy.Name] = true
+		proxyMap[proxy.Name] = true
 	}
 
-	for _, sourceProxy := range source.Proxies {
-		if !existingProxyNames[sourceProxy.Name] {
-			merged.Proxies = append(merged.Proxies, sourceProxy)
+	for _, proxy := range source.Proxies {
+		if !proxyMap[proxy.Name] {
+			merged.Proxies = append(merged.Proxies, proxy)
 		}
 	}
 
-	// 合并访问者配置（避免重复）
-	existingVisitorNames := make(map[string]bool)
+	visitorMap := make(map[string]bool)
 	for _, visitor := range merged.Visitors {
-		existingVisitorNames[visitor.Name] = true
+		visitorMap[visitor.Name] = true
 	}
 
-	for _, sourceVisitor := range source.Visitors {
-		if !existingVisitorNames[sourceVisitor.Name] {
-			merged.Visitors = append(merged.Visitors, sourceVisitor)
+	for _, visitor := range source.Visitors {
+		if !visitorMap[visitor.Name] {
+			merged.Visitors = append(merged.Visitors, visitor)
 		}
 	}
 
@@ -494,13 +484,6 @@ func detectConfigType(config *Config) string {
 
 // ValidateConfigFile 验证配置文件格式
 func (l *Loader) ValidateConfigFile(filePath string) error {
-	// 检查文件扩展名
-	ext := filepath.Ext(filePath)
-	if ext != ".yaml" && ext != ".yml" {
-		return fmt.Errorf("不支持的文件格式: %s，仅支持 .yaml 和 .yml", ext)
-	}
-
-	// 尝试解析文件
 	_, err := l.ImportFromFile(filePath)
 	return err
 }

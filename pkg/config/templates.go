@@ -16,54 +16,66 @@ type ConfigTemplate struct {
 
 // TemplateManager 模板管理器
 type TemplateManager struct {
-	templates []ConfigTemplate
+	templates map[string]*ConfigTemplate
 }
 
 // NewTemplateManager 创建新的模板管理器
 func NewTemplateManager() *TemplateManager {
-	return &TemplateManager{
-		templates: getBuiltinTemplates(),
+	tm := &TemplateManager{
+		templates: make(map[string]*ConfigTemplate),
 	}
+
+	for _, template := range getBuiltinTemplates() {
+		tm.templates[template.Name] = template
+	}
+
+	return tm
 }
 
 // GetTemplates 获取所有模板
-func (tm *TemplateManager) GetTemplates() []ConfigTemplate {
-	return tm.templates
+func (tm *TemplateManager) GetTemplates() []*ConfigTemplate {
+	templates := make([]*ConfigTemplate, 0, len(tm.templates))
+	for _, template := range tm.templates {
+		templates = append(templates, template)
+	}
+	return templates
 }
 
 // GetTemplatesByType 根据类型获取模板
-func (tm *TemplateManager) GetTemplatesByType(templateType string) []ConfigTemplate {
-	var filtered []ConfigTemplate
+func (tm *TemplateManager) GetTemplatesByType(configType string) []*ConfigTemplate {
+	var templates []*ConfigTemplate
 	for _, template := range tm.templates {
-		if template.Type == templateType {
-			filtered = append(filtered, template)
+		if template.Type == configType {
+			templates = append(templates, template)
 		}
 	}
-	return filtered
+	return templates
 }
 
 // GetTemplate 根据名称获取模板
-func (tm *TemplateManager) GetTemplate(name string) *ConfigTemplate {
-	for _, template := range tm.templates {
-		if template.Name == name {
-			return &template
-		}
+func (tm *TemplateManager) GetTemplate(name string) (*ConfigTemplate, error) {
+	template, exists := tm.templates[name]
+	if !exists {
+		return nil, fmt.Errorf("模板不存在: %s", name)
 	}
-	return nil
+	return template, nil
 }
 
 // AddTemplate 添加自定义模板
-func (tm *TemplateManager) AddTemplate(template ConfigTemplate) {
-	template.CreatedAt = time.Now()
-	tm.templates = append(tm.templates, template)
+func (tm *TemplateManager) AddTemplate(template *ConfigTemplate) error {
+	if template.Name == "" {
+		return fmt.Errorf("模板名称不能为空")
+	}
+	tm.templates[template.Name] = template
+	return nil
 }
 
 // getBuiltinTemplates 获取内置模板
-func getBuiltinTemplates() []ConfigTemplate {
-	return []ConfigTemplate{
+func getBuiltinTemplates() []*ConfigTemplate {
+	return []*ConfigTemplate{
 		{
 			Name:        "基础服务端",
-			Description: "基础 FRP 服务端配置，包含 Web 管理界面",
+			Description: "基本的FRP服务端配置",
 			Type:        "server",
 			Config: &Config{
 				BindPort: 7000,
@@ -81,52 +93,29 @@ func getBuiltinTemplates() []ConfigTemplate {
 		},
 		{
 			Name:        "安全服务端",
-			Description: "带认证令牌的安全 FRP 服务端配置",
+			Description: "带认证的安全服务端配置",
 			Type:        "server",
 			Config: &Config{
 				BindPort: 7000,
-				Token:    "your_secure_token_here",
+				Token:    "your_token_here",
 				WebServer: WebServerConfig{
 					Port:     7500,
 					User:     "admin",
 					Password: "secure_password",
 				},
 				Log: LogConfig{
-					To:    "console",
-					Level: "warn",
-				},
-			},
-			CreatedAt: time.Now(),
-		},
-		{
-			Name:        "Web 服务代理",
-			Description: "HTTP/HTTPS Web 服务代理模板",
-			Type:        "client",
-			Config: &Config{
-				ServerAddr: "frp.example.com",
-				ServerPort: 7000,
-				Log: LogConfig{
-					To:    "console",
+					To:    "file",
 					Level: "info",
 				},
-				Proxies: []ProxyConfig{
-					{
-						Name:          "web",
-						Type:          "http",
-						LocalIP:       "127.0.0.1",
-						LocalPort:     8080,
-						CustomDomains: []string{"www.example.com"},
-					},
-				},
 			},
 			CreatedAt: time.Now(),
 		},
 		{
-			Name:        "SSH 隧道",
-			Description: "SSH 服务代理模板",
+			Name:        "SSH隧道客户端",
+			Description: "SSH端口转发客户端配置",
 			Type:        "client",
 			Config: &Config{
-				ServerAddr: "frp.example.com",
+				ServerAddr: "your_server_ip",
 				ServerPort: 7000,
 				Log: LogConfig{
 					To:    "console",
@@ -145,11 +134,11 @@ func getBuiltinTemplates() []ConfigTemplate {
 			CreatedAt: time.Now(),
 		},
 		{
-			Name:        "多服务代理",
-			Description: "包含多个服务的客户端配置模板",
+			Name:        "Web服务客户端",
+			Description: "HTTP/HTTPS服务客户端配置",
 			Type:        "client",
 			Config: &Config{
-				ServerAddr: "frp.example.com",
+				ServerAddr: "your_server_ip",
 				ServerPort: 7000,
 				Log: LogConfig{
 					To:    "console",
@@ -160,58 +149,104 @@ func getBuiltinTemplates() []ConfigTemplate {
 						Name:          "web",
 						Type:          "http",
 						LocalIP:       "127.0.0.1",
-						LocalPort:     8080,
-						CustomDomains: []string{"web.example.com"},
+						LocalPort:     80,
+						CustomDomains: []string{"yourdomain.com"},
 					},
+				},
+			},
+			CreatedAt: time.Now(),
+		},
+		{
+			Name:        "远程桌面客户端",
+			Description: "RDP/VNC远程桌面客户端配置",
+			Type:        "client",
+			Config: &Config{
+				ServerAddr: "your_server_ip",
+				ServerPort: 7000,
+				Log: LogConfig{
+					To:    "console",
+					Level: "info",
+				},
+				Proxies: []ProxyConfig{
 					{
-						Name:       "ssh",
+						Name:       "rdp",
 						Type:       "tcp",
 						LocalIP:    "127.0.0.1",
-						LocalPort:  22,
-						RemotePort: 6000,
+						LocalPort:  3389,
+						RemotePort: 3389,
 					},
+				},
+			},
+			CreatedAt: time.Now(),
+		},
+		{
+			Name:        "数据库客户端",
+			Description: "数据库端口转发客户端配置",
+			Type:        "client",
+			Config: &Config{
+				ServerAddr: "your_server_ip",
+				ServerPort: 7000,
+				Log: LogConfig{
+					To:    "console",
+					Level: "info",
+				},
+				Proxies: []ProxyConfig{
 					{
-						Name:       "database",
+						Name:       "mysql",
 						Type:       "tcp",
 						LocalIP:    "127.0.0.1",
 						LocalPort:  3306,
-						RemotePort: 6001,
+						RemotePort: 3306,
+					},
+					{
+						Name:       "postgres",
+						Type:       "tcp",
+						LocalIP:    "127.0.0.1",
+						LocalPort:  5432,
+						RemotePort: 5432,
 					},
 				},
 			},
 			CreatedAt: time.Now(),
 		},
 		{
-			Name:        "HTTPS 安全代理",
-			Description: "HTTPS 服务代理模板",
+			Name:        "游戏服务器客户端",
+			Description: "游戏服务器端口转发配置",
 			Type:        "client",
 			Config: &Config{
-				ServerAddr: "frp.example.com",
+				ServerAddr: "your_server_ip",
 				ServerPort: 7000,
-				Token:      "your_secure_token_here",
 				Log: LogConfig{
 					To:    "console",
 					Level: "info",
 				},
 				Proxies: []ProxyConfig{
 					{
-						Name:          "https_web",
-						Type:          "https",
-						LocalIP:       "127.0.0.1",
-						LocalPort:     8443,
-						CustomDomains: []string{"secure.example.com"},
+						Name:       "minecraft",
+						Type:       "tcp",
+						LocalIP:    "127.0.0.1",
+						LocalPort:  25565,
+						RemotePort: 25565,
+					},
+					{
+						Name:       "cs-server",
+						Type:       "udp",
+						LocalIP:    "127.0.0.1",
+						LocalPort:  27015,
+						RemotePort: 27015,
 					},
 				},
 			},
 			CreatedAt: time.Now(),
 		},
 		{
-			Name:        "内网穿透",
-			Description: "STCP 内网穿透模板",
+			Name:        "安全内网穿透",
+			Description: "使用STCP的安全内网穿透配置",
 			Type:        "client",
 			Config: &Config{
-				ServerAddr: "frp.example.com",
+				ServerAddr: "your_server_ip",
 				ServerPort: 7000,
+				Token:      "your_token_here",
 				Log: LogConfig{
 					To:    "console",
 					Level: "info",
@@ -220,9 +255,9 @@ func getBuiltinTemplates() []ConfigTemplate {
 					{
 						Name:      "secret_ssh",
 						Type:      "stcp",
+						SecretKey: "abcdefg",
 						LocalIP:   "127.0.0.1",
 						LocalPort: 22,
-						SecretKey: "abcdefg",
 					},
 				},
 				Visitors: []VisitorConfig{
@@ -242,148 +277,132 @@ func getBuiltinTemplates() []ConfigTemplate {
 }
 
 // ApplyTemplate 应用模板到配置
-func (tm *TemplateManager) ApplyTemplate(templateName string, targetConfig *Config) error {
-	template := tm.GetTemplate(templateName)
-	if template == nil {
-		return fmt.Errorf("模板 '%s' 不存在", templateName)
+func (tm *TemplateManager) ApplyTemplate(templateName string) (*Config, error) {
+	template, err := tm.GetTemplate(templateName)
+	if err != nil {
+		return nil, err
 	}
 
-	// 深拷贝模板配置
-	*targetConfig = *template.Config
+	config := *template.Config
 
-	// 复制代理配置
-	if len(template.Config.Proxies) > 0 {
-		targetConfig.Proxies = make([]ProxyConfig, len(template.Config.Proxies))
-		copy(targetConfig.Proxies, template.Config.Proxies)
-	}
+	proxies := make([]ProxyConfig, len(template.Config.Proxies))
+	copy(proxies, template.Config.Proxies)
+	config.Proxies = proxies
 
-	// 复制访问者配置
-	if len(template.Config.Visitors) > 0 {
-		targetConfig.Visitors = make([]VisitorConfig, len(template.Config.Visitors))
-		copy(targetConfig.Visitors, template.Config.Visitors)
-	}
+	visitors := make([]VisitorConfig, len(template.Config.Visitors))
+	copy(visitors, template.Config.Visitors)
+	config.Visitors = visitors
 
-	return nil
+	return &config, nil
 }
 
 // MergeTemplate 合并模板到现有配置
-func (tm *TemplateManager) MergeTemplate(templateName string, targetConfig *Config) error {
-	template := tm.GetTemplate(templateName)
-	if template == nil {
-		return fmt.Errorf("模板 '%s' 不存在", templateName)
+func (tm *TemplateManager) MergeTemplate(target *Config, templateName string) (*Config, error) {
+	template, err := tm.GetTemplate(templateName)
+	if err != nil {
+		return nil, err
 	}
 
-	// 合并基本配置（只有目标配置为空时才设置）
-	if targetConfig.ServerAddr == "" && template.Config.ServerAddr != "" {
-		targetConfig.ServerAddr = template.Config.ServerAddr
-	}
-	if targetConfig.ServerPort == 0 && template.Config.ServerPort != 0 {
-		targetConfig.ServerPort = template.Config.ServerPort
-	}
-	if targetConfig.BindPort == 0 && template.Config.BindPort != 0 {
-		targetConfig.BindPort = template.Config.BindPort
-	}
-	if targetConfig.Token == "" && template.Config.Token != "" {
-		targetConfig.Token = template.Config.Token
+	if target == nil {
+		return tm.ApplyTemplate(templateName)
 	}
 
-	// 合并 Web 服务器配置
-	if targetConfig.WebServer.Port == 0 && template.Config.WebServer.Port != 0 {
-		targetConfig.WebServer.Port = template.Config.WebServer.Port
+	merged := *target
+
+	if merged.ServerAddr == "" && template.Config.ServerAddr != "" {
+		merged.ServerAddr = template.Config.ServerAddr
 	}
-	if targetConfig.WebServer.User == "" && template.Config.WebServer.User != "" {
-		targetConfig.WebServer.User = template.Config.WebServer.User
+	if merged.ServerPort == 0 && template.Config.ServerPort != 0 {
+		merged.ServerPort = template.Config.ServerPort
 	}
-	if targetConfig.WebServer.Password == "" && template.Config.WebServer.Password != "" {
-		targetConfig.WebServer.Password = template.Config.WebServer.Password
+	if merged.Token == "" && template.Config.Token != "" {
+		merged.Token = template.Config.Token
+	}
+	if merged.BindPort == 0 && template.Config.BindPort != 0 {
+		merged.BindPort = template.Config.BindPort
 	}
 
-	// 合并日志配置
-	if targetConfig.Log.Level == "" && template.Config.Log.Level != "" {
-		targetConfig.Log.Level = template.Config.Log.Level
-	}
-	if targetConfig.Log.To == "" && template.Config.Log.To != "" {
-		targetConfig.Log.To = template.Config.Log.To
+	if merged.WebServer.Port == 0 && template.Config.WebServer.Port != 0 {
+		merged.WebServer = template.Config.WebServer
 	}
 
-	// 添加代理配置（避免重复）
-	existingProxyNames := make(map[string]bool)
-	for _, proxy := range targetConfig.Proxies {
-		existingProxyNames[proxy.Name] = true
+	if merged.Log.Level == "" && template.Config.Log.Level != "" {
+		merged.Log = template.Config.Log
 	}
 
-	for _, templateProxy := range template.Config.Proxies {
-		if !existingProxyNames[templateProxy.Name] {
-			targetConfig.Proxies = append(targetConfig.Proxies, templateProxy)
+	proxyNames := make(map[string]bool)
+	for _, proxy := range merged.Proxies {
+		proxyNames[proxy.Name] = true
+	}
+
+	for _, proxy := range template.Config.Proxies {
+		if !proxyNames[proxy.Name] {
+			merged.Proxies = append(merged.Proxies, proxy)
 		}
 	}
 
-	// 添加访问者配置（避免重复）
-	existingVisitorNames := make(map[string]bool)
-	for _, visitor := range targetConfig.Visitors {
-		existingVisitorNames[visitor.Name] = true
+	visitorNames := make(map[string]bool)
+	for _, visitor := range merged.Visitors {
+		visitorNames[visitor.Name] = true
 	}
 
-	for _, templateVisitor := range template.Config.Visitors {
-		if !existingVisitorNames[templateVisitor.Name] {
-			targetConfig.Visitors = append(targetConfig.Visitors, templateVisitor)
+	for _, visitor := range template.Config.Visitors {
+		if !visitorNames[visitor.Name] {
+			merged.Visitors = append(merged.Visitors, visitor)
 		}
 	}
 
-	return nil
+	return &merged, nil
 }
 
 // SaveTemplate 保存当前配置为模板
-func (tm *TemplateManager) SaveTemplate(name, description, templateType string, config *Config) {
-	template := ConfigTemplate{
+func (tm *TemplateManager) SaveTemplate(name, description, configType string, config *Config) error {
+	if name == "" {
+		return fmt.Errorf("模板名称不能为空")
+	}
+	if config == nil {
+		return fmt.Errorf("配置不能为空")
+	}
+
+	template := &ConfigTemplate{
 		Name:        name,
 		Description: description,
-		Type:        templateType,
+		Type:        configType,
 		Config:      config,
 		CreatedAt:   time.Now(),
 	}
 
-	tm.AddTemplate(template)
+	return tm.AddTemplate(template)
 }
 
 // DeleteTemplate 删除模板
-func (tm *TemplateManager) DeleteTemplate(name string) bool {
-	for i, template := range tm.templates {
-		if template.Name == name {
-			tm.templates = append(tm.templates[:i], tm.templates[i+1:]...)
-			return true
-		}
+func (tm *TemplateManager) DeleteTemplate(name string) error {
+	if _, exists := tm.templates[name]; !exists {
+		return fmt.Errorf("模板不存在: %s", name)
 	}
-	return false
+	delete(tm.templates, name)
+	return nil
 }
 
 // ExportTemplate 导出模板为配置文件
-func (tm *TemplateManager) ExportTemplate(templateName, filePath string) error {
-	template := tm.GetTemplate(templateName)
-	if template == nil {
-		return fmt.Errorf("模板 '%s' 不存在", templateName)
+func (tm *TemplateManager) ExportTemplate(name, filePath string) error {
+	template, err := tm.GetTemplate(name)
+	if err != nil {
+		return err
 	}
 
 	loader := NewLoader(filePath)
-	return loader.Save(template.Config)
+	return loader.ExportToFile(template.Config, filePath)
 }
 
 // ImportTemplate 从配置文件导入模板
-func (tm *TemplateManager) ImportTemplate(name, description, templateType, filePath string) error {
+func (tm *TemplateManager) ImportTemplate(name, description, filePath string) error {
 	loader := NewLoader(filePath)
-	config, err := loader.Load()
+	config, err := loader.ImportFromFile(filePath)
 	if err != nil {
-		return fmt.Errorf("导入模板失败: %w", err)
+		return err
 	}
 
-	template := ConfigTemplate{
-		Name:        name,
-		Description: description,
-		Type:        templateType,
-		Config:      config,
-		CreatedAt:   time.Now(),
-	}
-
-	tm.AddTemplate(template)
-	return nil
+	configType := detectConfigType(config)
+	return tm.SaveTemplate(name, description, configType, config)
 }

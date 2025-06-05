@@ -61,25 +61,20 @@ func (m *Manager) StartServer(configPath string) error {
 		return fmt.Errorf("FRP 服务端已在运行")
 	}
 
-	// 检查配置文件是否存在
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		return fmt.Errorf("配置文件不存在: %s", configPath)
 	}
 
-	// 创建上下文用于取消
 	ctx, cancel := context.WithCancel(context.Background())
 	m.serverCancel = cancel
 
-	// 查找 frps 可执行文件
 	frpsPath, err := m.findFRPExecutable("frps")
 	if err != nil {
 		return fmt.Errorf("找不到 frps 可执行文件: %w", err)
 	}
 
-	// 创建命令
 	m.serverCmd = exec.CommandContext(ctx, frpsPath, "-c", configPath)
 
-	// 设置输出管道
 	stdout, err := m.serverCmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("创建输出管道失败: %w", err)
@@ -90,16 +85,12 @@ func (m *Manager) StartServer(configPath string) error {
 		return fmt.Errorf("创建错误管道失败: %w", err)
 	}
 
-	// 启动进程
 	if err := m.serverCmd.Start(); err != nil {
 		return fmt.Errorf("启动 FRP 服务端失败: %w", err)
 	}
 
-	// 启动日志收集
 	go m.collectLogs(stdout, "server", "INFO")
 	go m.collectLogs(stderr, "server", "ERROR")
-
-	// 监控进程状态
 	go m.monitorProcess(m.serverCmd, "server")
 
 	m.isRunning = true
@@ -122,25 +113,20 @@ func (m *Manager) StartClient(configPath string) error {
 		return fmt.Errorf("FRP 客户端已在运行")
 	}
 
-	// 检查配置文件是否存在
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		return fmt.Errorf("配置文件不存在: %s", configPath)
 	}
 
-	// 创建上下文用于取消
 	ctx, cancel := context.WithCancel(context.Background())
 	m.clientCancel = cancel
 
-	// 查找 frpc 可执行文件
 	frpcPath, err := m.findFRPExecutable("frpc")
 	if err != nil {
 		return fmt.Errorf("找不到 frpc 可执行文件: %w", err)
 	}
 
-	// 创建命令
 	m.clientCmd = exec.CommandContext(ctx, frpcPath, "-c", configPath)
 
-	// 设置输出管道
 	stdout, err := m.clientCmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("创建输出管道失败: %w", err)
@@ -151,16 +137,12 @@ func (m *Manager) StartClient(configPath string) error {
 		return fmt.Errorf("创建错误管道失败: %w", err)
 	}
 
-	// 启动进程
 	if err := m.clientCmd.Start(); err != nil {
 		return fmt.Errorf("启动 FRP 客户端失败: %w", err)
 	}
 
-	// 启动日志收集
 	go m.collectLogs(stdout, "client", "INFO")
 	go m.collectLogs(stderr, "client", "ERROR")
-
-	// 监控进程状态
 	go m.monitorProcess(m.clientCmd, "client")
 
 	m.logChan <- LogMessage{
@@ -180,86 +162,43 @@ func (m *Manager) StopServer() error {
 
 	var stoppedPID int
 
-	// 首先尝试停止自己管理的进程
 	if m.serverCmd != nil && m.serverCmd.Process != nil {
 		process := m.serverCmd.Process
-		cmd := m.serverCmd
 		stoppedPID = process.Pid
 
-		// 取消上下文
 		if m.serverCancel != nil {
 			m.serverCancel()
 			m.serverCancel = nil
 		}
 
-		// 优雅关闭
 		if err := process.Signal(syscall.SIGTERM); err != nil {
-			// 如果优雅关闭失败，强制杀死进程
 			if killErr := process.Kill(); killErr != nil {
 				return fmt.Errorf("强制停止进程失败: %w", killErr)
 			}
 		}
 
-		// 清理引用
+		m.serverCmd.Wait()
 		m.serverCmd = nil
-
-		// 发送停止消息（但注意进程可能还在退出中）
-		m.logChan <- LogMessage{
-			Timestamp: time.Now(),
-			Level:     "INFO",
-			Message:   fmt.Sprintf("正在停止 FRP 服务端 (PID: %d)", stoppedPID),
-			Source:    "server",
-		}
-
-		// 等待进程结束，有超时机制
-		go func() {
-			done := make(chan bool, 1)
-			go func() {
-				cmd.Wait()
-				done <- true
-			}()
-
-			select {
-			case <-done:
-				// 进程正常结束
-				m.logChan <- LogMessage{
-					Timestamp: time.Now(),
-					Level:     "INFO",
-					Message:   fmt.Sprintf("FRP 服务端已完全停止 (PID: %d)", stoppedPID),
-					Source:    "server",
-				}
-			case <-time.After(5 * time.Second):
-				// 超时强制杀死
-				process.Kill()
-				m.logChan <- LogMessage{
-					Timestamp: time.Now(),
-					Level:     "WARN",
-					Message:   fmt.Sprintf("FRP 服务端强制停止 (PID: %d)", stoppedPID),
-					Source:    "server",
-				}
+		m.isRunning = false
+	} else {
+		if pid := m.findFRPProcess("frps"); pid > 0 {
+			stoppedPID = pid
+			if err := m.killProcessByPID(pid); err != nil {
+				return fmt.Errorf("停止外部FRP服务端失败: %w", err)
 			}
-		}()
-
-		return nil
+		}
 	}
 
-	// 如果没有自己管理的进程，尝试查找并停止外部进程
-	if pid := m.findFRPProcess("frps"); pid > 0 {
-		if err := m.killProcessByPID(pid); err != nil {
-			return fmt.Errorf("停止外部 FRP 服务端进程失败: %w", err)
-		}
-
+	if stoppedPID > 0 {
 		m.logChan <- LogMessage{
 			Timestamp: time.Now(),
 			Level:     "INFO",
-			Message:   fmt.Sprintf("外部 FRP 服务端进程已停止 (PID: %d)", pid),
+			Message:   fmt.Sprintf("FRP 服务端已停止 (PID: %d)", stoppedPID),
 			Source:    "server",
 		}
-
-		return nil
 	}
 
-	return fmt.Errorf("没有找到运行中的 FRP 服务端进程")
+	return nil
 }
 
 // StopClient 停止 FRP 客户端 - 支持停止外部启动的进程
@@ -344,12 +283,12 @@ func (m *Manager) killProcessByPID(pid int) error {
 	}
 }
 
-// GetServerStatus 获取服务端状态
+// GetServerStatus 获取服务端状态 - 仅检查自己管理的进程
 func (m *Manager) GetServerStatus() ProcessStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// 首先检查自己管理的进程
+	// 只检查自己管理的进程，避免受外部进程干扰
 	if m.serverCmd != nil && m.serverCmd.Process != nil {
 		return ProcessStatus{
 			IsRunning: true,
@@ -358,38 +297,20 @@ func (m *Manager) GetServerStatus() ProcessStatus {
 		}
 	}
 
-	// 检查系统中是否有运行的 frps 进程
-	if pid := m.findFRPProcess("frps"); pid > 0 {
-		return ProcessStatus{
-			IsRunning: true,
-			PID:       pid,
-			StartTime: time.Now(),
-		}
-	}
-
 	return ProcessStatus{IsRunning: false}
 }
 
-// GetClientStatus 获取客户端状态
+// GetClientStatus 获取客户端状态 - 仅检查自己管理的进程
 func (m *Manager) GetClientStatus() ProcessStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// 首先检查自己管理的进程
+	// 只检查自己管理的进程，避免受外部进程干扰
 	if m.clientCmd != nil && m.clientCmd.Process != nil {
 		return ProcessStatus{
 			IsRunning: true,
 			PID:       m.clientCmd.Process.Pid,
 			StartTime: time.Now(), // 这里应该记录实际启动时间
-		}
-	}
-
-	// 检查系统中是否有运行的 frpc 进程
-	if pid := m.findFRPProcess("frpc"); pid > 0 {
-		return ProcessStatus{
-			IsRunning: true,
-			PID:       pid,
-			StartTime: time.Now(),
 		}
 	}
 

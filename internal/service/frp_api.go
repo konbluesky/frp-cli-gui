@@ -16,16 +16,30 @@ type APIClient struct {
 	httpClient *http.Client
 }
 
-// ProxyInfo 代理信息
+// ProxyInfo 代理信息（匹配FRP实际API响应）
 type ProxyInfo struct {
-	Name          string `json:"name"`
-	Type          string `json:"type"`
-	Status        string `json:"status"`
-	LocalAddr     string `json:"local_addr"`
-	RemoteAddr    string `json:"remote_addr"`
-	TodayTraffic  int64  `json:"today_traffic"`
-	LastStartTime string `json:"last_start_time"`
-	LastCloseTime string `json:"last_close_time"`
+	Name            string    `json:"name"`
+	Conf            ProxyConf `json:"conf"`
+	ClientVersion   string    `json:"clientVersion"`
+	TodayTrafficIn  int64     `json:"todayTrafficIn"`
+	TodayTrafficOut int64     `json:"todayTrafficOut"`
+	CurConns        int       `json:"curConns"`
+	LastStartTime   string    `json:"lastStartTime"`
+	LastCloseTime   string    `json:"lastCloseTime"`
+	Status          string    `json:"status"`
+}
+
+// ProxyConf 代理配置信息
+type ProxyConf struct {
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	LocalIP    string `json:"localIP"`
+	RemotePort int    `json:"remotePort"`
+	// FRP API中有很多额外字段，但我们主要需要这些
+	Transport    map[string]string      `json:"transport"`
+	LoadBalancer map[string]string      `json:"loadBalancer"`
+	HealthCheck  map[string]interface{} `json:"healthCheck"`
+	Plugin       map[string]interface{} `json:"plugin"`
 }
 
 // ServerInfo 服务器信息
@@ -131,19 +145,37 @@ func (c *APIClient) GetServerInfo() (*ServerInfo, error) {
 	return &serverInfo, nil
 }
 
-// GetProxyList 获取代理列表
+// GetProxyList 获取所有类型的代理列表
 func (c *APIClient) GetProxyList() ([]ProxyInfo, error) {
-	data, err := c.makeRequest("/api/proxy")
+	// FRP API需要按类型分别查询，常见的代理类型包括：
+	proxyTypes := []string{"tcp", "http", "https", "stcp", "sudp", "udp", "xtcp"}
+	var allProxies []ProxyInfo
+
+	for _, proxyType := range proxyTypes {
+		proxies, err := c.getProxyListByType(proxyType)
+		if err != nil {
+			// 如果某个类型查询失败，记录但不中断整个查询
+			continue
+		}
+		allProxies = append(allProxies, proxies...)
+	}
+
+	return allProxies, nil
+}
+
+// getProxyListByType 按类型获取代理列表
+func (c *APIClient) getProxyListByType(proxyType string) ([]ProxyInfo, error) {
+	endpoint := fmt.Sprintf("/api/proxy/%s", proxyType)
+	data, err := c.makeRequest(endpoint)
 	if err != nil {
-		return nil, fmt.Errorf("获取代理列表失败: %w", err)
+		return nil, fmt.Errorf("获取%s类型代理失败: %w", proxyType, err)
 	}
 
 	var response struct {
 		Proxies []ProxyInfo `json:"proxies"`
 	}
-
 	if err := json.Unmarshal(data, &response); err != nil {
-		return nil, fmt.Errorf("解析代理列表失败: %w", err)
+		return nil, fmt.Errorf("解析%s类型代理失败: %w", proxyType, err)
 	}
 
 	return response.Proxies, nil

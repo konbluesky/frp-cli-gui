@@ -15,6 +15,9 @@ import (
 // settingsTickMsg 设置标签页时钟消息类型
 type settingsTickMsg time.Time
 
+// logTickMsg 日志更新专用时钟消息类型
+type logTickMsg time.Time
+
 // installStatusMsg 安装状态消息
 type installStatusMsg struct {
 	status *installer.InstallStatus
@@ -57,9 +60,6 @@ type SettingsTab struct {
 	serverLogs      []string
 	clientLogs      []string
 	maxLogLines     int
-	// 简化状态检查
-	lastServerRunning bool
-	lastClientRunning bool
 }
 
 // NewSettingsTab 创建设置标签页 - 简化版本
@@ -68,21 +68,15 @@ func NewSettingsTab() *SettingsTab {
 	baseTab.focusable = true
 
 	st := &SettingsTab{
-		BaseTab:           baseTab,
-		installer:         installer.NewInstaller(""),
-		manager:           service.NewManager(),
-		serverStatus:      "已停止",
-		clientStatus:      "未连接",
-		serverLogs:        []string{},
-		clientLogs:        []string{},
-		maxLogLines:       20,
-		lastServerRunning: false,
-		lastClientRunning: false,
+		BaseTab:      baseTab,
+		installer:    installer.NewInstaller(""),
+		manager:      service.NewManager(),
+		serverStatus: "已停止",
+		clientStatus: "未连接",
+		serverLogs:   []string{"[15:04:05] [INFO] 日志系统已初始化"},
+		clientLogs:   []string{"[15:04:05] [INFO] 等待客户端启动..."},
+		maxLogLines:  20,
 	}
-
-	// 添加初始的调试日志来测试日志系统
-	st.serverLogs = append(st.serverLogs, "[15:04:05] [INFO] 日志系统已初始化")
-	st.clientLogs = append(st.clientLogs, "[15:04:05] [INFO] 等待客户端启动...")
 
 	return st
 }
@@ -92,9 +86,13 @@ func (st *SettingsTab) SetStatusCallback(callback StatusUpdateCallback) {
 	st.statusCallback = callback
 }
 
+// SetManager 设置Manager实例（用于共享Manager）
+func (st *SettingsTab) SetManager(manager *service.Manager) {
+	st.manager = manager
+}
+
 // Init 初始化 - 简化日志系统
 func (st *SettingsTab) Init() tea.Cmd {
-	// 同步检查安装状态
 	status, err := st.installer.CheckInstallation()
 	if err == nil {
 		st.installStatus = status
@@ -103,10 +101,13 @@ func (st *SettingsTab) Init() tea.Cmd {
 	}
 
 	return tea.Batch(
-		st.checkServiceStatus(), // 检查服务状态
-		// 延迟500ms后再开始自动刷新
+		st.checkServiceStatus(),
 		tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
 			return settingsTickMsg(t)
+		}),
+		// 独立的日志更新计时器，更频繁的更新
+		tea.Tick(1*time.Second, func(t time.Time) tea.Msg {
+			return logTickMsg(t)
 		}),
 	)
 }
@@ -115,6 +116,13 @@ func (st *SettingsTab) Init() tea.Cmd {
 func (st *SettingsTab) startAutoRefresh() tea.Cmd {
 	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
 		return settingsTickMsg(t)
+	})
+}
+
+// startLogAutoRefresh 启动独立的日志自动刷新
+func (st *SettingsTab) startLogAutoRefresh() tea.Cmd {
+	return tea.Tick(1*time.Second, func(t time.Time) tea.Msg {
+		return logTickMsg(t)
 	})
 }
 
@@ -147,7 +155,7 @@ func (st *SettingsTab) Update(msg tea.Msg) (Tab, tea.Cmd) {
 			case "s":
 				// 启动服务端 - 简化条件，优先检查服务状态
 				if st.serverStatus == "已停止" {
-					return st, tea.Batch(st.startServer(), st.updateLogs())
+					return st, st.startServer()
 				}
 			case "ctrl+s":
 				// 停止服务端 - 不管是否是自己启动的都尝试停止
@@ -157,7 +165,7 @@ func (st *SettingsTab) Update(msg tea.Msg) (Tab, tea.Cmd) {
 			case "c":
 				// 启动客户端 - 简化条件，优先检查服务状态
 				if st.clientStatus == "未连接" {
-					return st, tea.Batch(st.startClient(), st.updateLogs())
+					return st, st.startClient()
 				}
 			case "ctrl+x":
 				// 停止客户端 - 不管是否是自己启动的都尝试停止
@@ -171,11 +179,17 @@ func (st *SettingsTab) Update(msg tea.Msg) (Tab, tea.Cmd) {
 		}
 
 	case settingsTickMsg:
-		// 自动刷新状态和日志
+		// 自动刷新状态
 		cmds = append(cmds,
 			st.checkServiceStatus(),
-			st.updateLogs(),       // 更新日志
 			st.startAutoRefresh(), // 继续下一次自动刷新
+		)
+
+	case logTickMsg:
+		// 独立的日志更新
+		cmds = append(cmds,
+			st.updateLogs(),
+			st.startLogAutoRefresh(), // 继续下一次日志刷新
 		)
 
 	case installStatusMsg:
@@ -199,10 +213,7 @@ func (st *SettingsTab) Update(msg tea.Msg) (Tab, tea.Cmd) {
 			} else {
 				st.installProgress = msg.message
 				// 安装完成后同步检查状态
-				status, err := st.installer.CheckInstallation()
-				if err == nil {
-					st.installStatus = status
-				}
+				cmds = append(cmds, st.refreshInstallStatus())
 			}
 		} else {
 			st.installProgress = msg.message
@@ -215,8 +226,6 @@ func (st *SettingsTab) Update(msg tea.Msg) (Tab, tea.Cmd) {
 		if st.statusCallback != nil {
 			st.statusCallback(st.serverStatus, st.clientStatus)
 		}
-		// 当服务状态改变时，立即更新一次日志
-		cmds = append(cmds, st.updateLogs())
 
 	case logUpdateMsg:
 		st.serverLogs = msg.serverLogs
@@ -281,10 +290,6 @@ func (st *SettingsTab) renderLeftContent() string {
 
 	// FRP 服务控制部分
 	content += st.renderServiceControl()
-	content += "\n\n"
-
-	// 应用配置部分
-	content += st.renderAppConfig()
 	content += "\n\n"
 
 	// 操作提示部分（放在左侧内容底部）
@@ -434,20 +439,6 @@ func (st *SettingsTab) renderServiceControl() string {
 	return control
 }
 
-// renderAppConfig 渲染应用配置信息
-func (st *SettingsTab) renderAppConfig() string {
-	configStyle := lipgloss.NewStyle().Bold(true)
-
-	config := configStyle.Render("🔧 应用配置") + "\n\n"
-	config += "🎨 主题颜色: 紫色 (#7D56F4)\n"
-	config += "🔄 自动刷新: 启用 (2秒)\n"
-	config += "🌐 服务端地址: 127.0.0.1:7500\n"
-	config += "👤 管理员用户: admin\n"
-	config += "📂 配置文件路径: examples/\n"
-
-	return config
-}
-
 // renderHorizontalHelp 渲染横向操作提示 - 去掉边框，避免闪烁
 func (st *SettingsTab) renderHorizontalHelp() string {
 	helpStyle := lipgloss.NewStyle().
@@ -492,40 +483,44 @@ func (st *SettingsTab) checkServiceStatus() tea.Cmd {
 	return func() tea.Msg {
 		var serverStatus, clientStatus string
 
-		// 检查服务端状态
+		// 检查服务端状态 - 需要加入防抖动逻辑
 		serverProcessStatus := st.manager.GetServerStatus()
 		currentServerRunning := serverProcessStatus.IsRunning
 
-		// 只有状态真正改变时才更新状态
-		if currentServerRunning != st.lastServerRunning {
-			st.lastServerRunning = currentServerRunning
-			if currentServerRunning {
+		// 对于服务端，使用更保守的状态更新策略
+		if currentServerRunning {
+			// 如果检测到进程运行，立即更新为运行中
+			if st.serverStatus != "运行中" {
 				serverStatus = "运行中"
 			} else {
-				serverStatus = "已停止"
+				serverStatus = st.serverStatus
 			}
 		} else {
-			serverStatus = st.serverStatus // 保持当前状态
+			// 如果检测到进程不运行，且当前不是"已停止"状态，则更新
+			if st.serverStatus != "已停止" {
+				serverStatus = "已停止"
+			} else {
+				serverStatus = st.serverStatus
+			}
 		}
 
-		// 检查客户端状态
+		// 检查客户端状态 - 类似的保守策略
 		clientProcessStatus := st.manager.GetClientStatus()
 		currentClientRunning := clientProcessStatus.IsRunning
 
-		// 客户端状态逻辑：如果进程不存在且当前状态是"连接中"，则改为"未连接"
-		if currentClientRunning != st.lastClientRunning {
-			st.lastClientRunning = currentClientRunning
-			if currentClientRunning {
+		if currentClientRunning {
+			// 如果检测到进程运行，立即更新为已连接
+			if st.clientStatus != "已连接" {
 				clientStatus = "已连接"
 			} else {
-				clientStatus = "未连接"
+				clientStatus = st.clientStatus
 			}
 		} else {
-			// 特殊处理：如果客户端进程已经不存在，但状态仍是"连接中"，则更新为"未连接"
-			if !currentClientRunning && st.clientStatus == "连接中" {
+			// 如果进程不运行，根据当前状态决定
+			if st.clientStatus == "连接中" || st.clientStatus == "已连接" {
 				clientStatus = "未连接"
 			} else {
-				clientStatus = st.clientStatus // 保持当前状态
+				clientStatus = st.clientStatus
 			}
 		}
 
@@ -708,13 +703,11 @@ func (st *SettingsTab) updateLogs() tea.Cmd {
 		logChan := st.manager.GetLogChannel()
 
 		var newServerLogs, newClientLogs []string
-		hasNewLogs := false
 
 		// 非阻塞读取所有可用的新日志
 		for {
 			select {
 			case logMsg := <-logChan:
-				hasNewLogs = true
 				// 格式化日志消息，包含日志级别信息
 				formattedLog := fmt.Sprintf("[%s] [%s] %s",
 					logMsg.Timestamp.Format("15:04:05"),
@@ -734,10 +727,6 @@ func (st *SettingsTab) updateLogs() tea.Cmd {
 		}
 
 	done:
-		// 只有当有新日志时才发送更新消息
-		if !hasNewLogs {
-			return nil
-		}
 
 		// 合并新日志到现有日志
 		allServerLogs := append(st.serverLogs, newServerLogs...)
