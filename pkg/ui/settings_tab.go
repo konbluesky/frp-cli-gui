@@ -226,6 +226,8 @@ func (st *SettingsTab) Update(msg tea.Msg) (Tab, tea.Cmd) {
 		if st.statusCallback != nil {
 			st.statusCallback(st.serverStatus, st.clientStatus)
 		}
+		// 服务状态变化时立即触发一次日志更新
+		cmds = append(cmds, st.updateLogs())
 
 	case logUpdateMsg:
 		st.serverLogs = msg.serverLogs
