@@ -2,6 +2,8 @@
 
 一个基于 Bubble Tea 的 FRP (Fast Reverse Proxy) 命令行图形界面管理工具，支持自动检查和安装 FRP。
 
+![FRP CLI UI](./cli_snapshot.gif)
+
 ## 功能特性
 
 ### 🎯 核心功能
