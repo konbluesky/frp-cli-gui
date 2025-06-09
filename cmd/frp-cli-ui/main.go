@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"frp-cli-ui/internal/installer"
+	"frp-cli-ui/pkg/config"
 	"frp-cli-ui/pkg/ui"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -14,6 +15,12 @@ import (
 func main() {
 	// 设置字符宽度计算
 	runewidth.DefaultCondition.EastAsianWidth = false
+
+	// 初始化工作空间和配置文件
+	if err := config.InitializeWorkspace(); err != nil {
+		log.Printf("初始化工作空间失败: %v", err)
+		// 不退出程序，继续运行
+	}
 
 	// 检查 FRP 安装状态（可选操作）
 	inst := installer.NewInstaller("")

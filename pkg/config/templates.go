@@ -406,3 +406,66 @@ func (tm *TemplateManager) ImportTemplate(name, description, filePath string) er
 	configType := detectConfigType(config)
 	return tm.SaveTemplate(name, description, configType, config)
 }
+
+// DefaultServerConfigTemplate 默认服务端配置模板
+const DefaultServerConfigTemplate = `# FRP 服务端配置文件
+# 详细配置说明请参考: https://gofrp.org/docs/
+
+# 服务端监听地址
+bindAddr = "0.0.0.0"
+
+# 服务端监听端口
+bindPort = 7000
+
+# 认证令牌 (可选，建议设置以提高安全性)
+# auth.token = "your_secure_token_here"
+
+# 仪表板配置
+webServer.addr = "0.0.0.0"
+webServer.port = 7500
+webServer.user = "admin"
+webServer.password = "admin"
+
+# 日志配置
+log.to = "console"
+log.level = "info"
+
+# 允许的端口范围 (可选)
+# allowPorts = [
+#   { start = 2000, end = 3000 },
+#   { start = 3001, end = 3500 }
+# ]
+`
+
+// DefaultClientConfigTemplate 默认客户端配置模板
+const DefaultClientConfigTemplate = `# FRP 客户端配置文件
+# 详细配置说明请参考: https://gofrp.org/docs/
+
+# 服务端地址
+serverAddr = "127.0.0.1"
+
+# 服务端端口
+serverPort = 7000
+
+# 认证令牌 (需与服务端一致)
+# auth.token = "your_secure_token_here"
+
+# 日志配置
+log.to = "console"
+log.level = "info"
+
+# 代理配置示例
+# [[proxies]]
+# name = "web"
+# type = "tcp"
+# localIP = "127.0.0.1"
+# localPort = 8080
+# remotePort = 6000
+
+# [[proxies]]
+# name = "ssh"
+# type = "tcp"
+# localIP = "127.0.0.1"
+# localPort = 22
+# remotePort = 6001
+`

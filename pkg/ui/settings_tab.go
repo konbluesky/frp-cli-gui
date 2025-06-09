@@ -10,6 +10,7 @@ import (
 
 	"frp-cli-ui/internal/installer"
 	"frp-cli-ui/internal/service"
+	"frp-cli-ui/pkg/config"
 )
 
 // settingsTickMsg 设置标签页时钟消息类型
@@ -212,8 +213,16 @@ func (st *SettingsTab) Update(msg tea.Msg) (Tab, tea.Cmd) {
 				}
 			} else {
 				st.installProgress = msg.message
-				// 安装完成后同步检查状态
+				// 安装完成后同步检查状态并触发初始化
 				cmds = append(cmds, st.refreshInstallStatus())
+				// 如果是安装成功，触发初始化逻辑
+				if strings.Contains(msg.message, "安装成功") {
+					cmds = append(cmds, func() tea.Msg {
+						// 触发工作空间初始化
+						config.InitializeWorkspace()
+						return tea.Msg(nil)
+					})
+				}
 			}
 		} else {
 			st.installProgress = msg.message
@@ -433,10 +442,6 @@ func (st *SettingsTab) renderServiceControl() string {
 	}
 	clientStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(clientStatusColor))
 	control += fmt.Sprintf("💻 客户端状态: %s\n", clientStyle.Render(st.clientStatus))
-
-	control += "\n📂 配置文件:\n"
-	control += "• 服务端: examples/frps.yaml\n"
-	control += "• 客户端: examples/frpc.yaml\n"
 
 	return control
 }

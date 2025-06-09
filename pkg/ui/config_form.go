@@ -30,6 +30,8 @@ type ConfigFormModel struct {
 	visitorConfig *config.VisitorConfig
 	completed     bool
 	err           error
+	// 添加表单数据绑定字段
+	formData map[string]*string
 }
 
 // NewServerConfigForm 创建服务端配置表单
@@ -38,21 +40,30 @@ func NewServerConfigForm(cfg *config.Config) *ConfigFormModel {
 		cfg = config.CreateDefaultServerConfig()
 	}
 
-	var bindPort, webPort string
-	var webAddr, webUser, webPassword, logTo, logLevel, token string
+	// 创建表单数据绑定
+	formData := make(map[string]*string)
+	formData["bindPort"] = new(string)
+	formData["webPort"] = new(string)
+	formData["webAddr"] = new(string)
+	formData["webUser"] = new(string)
+	formData["webPassword"] = new(string)
+	formData["logTo"] = new(string)
+	formData["logLevel"] = new(string)
+	formData["token"] = new(string)
 
+	// 初始化表单数据
 	if cfg.BindPort > 0 {
-		bindPort = strconv.Itoa(cfg.BindPort)
+		*formData["bindPort"] = strconv.Itoa(cfg.BindPort)
 	}
 	if cfg.WebServer.Port > 0 {
-		webPort = strconv.Itoa(cfg.WebServer.Port)
+		*formData["webPort"] = strconv.Itoa(cfg.WebServer.Port)
 	}
-	webAddr = cfg.WebServer.Addr
-	webUser = cfg.WebServer.User
-	webPassword = cfg.WebServer.Password
-	logTo = cfg.Log.To
-	logLevel = cfg.Log.Level
-	token = cfg.Token
+	*formData["webAddr"] = cfg.WebServer.Addr
+	*formData["webUser"] = cfg.WebServer.User
+	*formData["webPassword"] = cfg.WebServer.Password
+	*formData["logTo"] = cfg.Log.To
+	*formData["logLevel"] = cfg.Log.Level
+	*formData["token"] = cfg.Token
 
 	form := huh.NewForm(
 		huh.NewGroup(
@@ -60,25 +71,25 @@ func NewServerConfigForm(cfg *config.Config) *ConfigFormModel {
 				Title("服务端监听端口").
 				Description("FRP 服务端监听端口，客户端通过此端口连接").
 				Placeholder("7000").
-				Value(&bindPort),
+				Value(formData["bindPort"]),
 
 			huh.NewInput().
 				Title("认证令牌 (可选)").
 				Description("客户端连接时使用的认证令牌，留空表示不需要认证").
 				Placeholder("your_secure_token_here").
-				Value(&token),
+				Value(formData["token"]),
 
 			huh.NewInput().
 				Title("Web 管理界面地址").
 				Description("Web 管理界面监听地址").
 				Placeholder("127.0.0.1").
-				Value(&webAddr),
+				Value(formData["webAddr"]),
 
 			huh.NewInput().
 				Title("Web 管理界面端口").
 				Description("Web 管理界面监听端口").
 				Placeholder("7500").
-				Value(&webPort).
+				Value(formData["webPort"]).
 				Validate(func(str string) error {
 					if str == "" {
 						return nil // Web 端口可以为空
@@ -97,13 +108,13 @@ func NewServerConfigForm(cfg *config.Config) *ConfigFormModel {
 				Title("Web 管理用户名").
 				Description("Web 管理界面登录用户名").
 				Placeholder("admin").
-				Value(&webUser),
+				Value(formData["webUser"]),
 
 			huh.NewInput().
 				Title("Web 管理密码").
 				Description("Web 管理界面登录密码").
 				Placeholder("admin").
-				Value(&webPassword).
+				Value(formData["webPassword"]).
 				EchoMode(huh.EchoModePassword),
 			huh.NewSelect[string]().
 				Title("日志输出位置").
@@ -112,7 +123,7 @@ func NewServerConfigForm(cfg *config.Config) *ConfigFormModel {
 					huh.NewOption("控制台", "console"),
 					huh.NewOption("文件", "file"),
 				).
-				Value(&logTo),
+				Value(formData["logTo"]),
 
 			huh.NewSelect[string]().
 				Title("日志级别").
@@ -124,7 +135,7 @@ func NewServerConfigForm(cfg *config.Config) *ConfigFormModel {
 					huh.NewOption("Warn", "warn"),
 					huh.NewOption("Error", "error"),
 				).
-				Value(&logLevel),
+				Value(formData["logLevel"]),
 		).Title("📄 日志配置"),
 	)
 
@@ -134,6 +145,7 @@ func NewServerConfigForm(cfg *config.Config) *ConfigFormModel {
 		form:     form,
 		formType: ServerConfigForm,
 		config:   cfg,
+		formData: formData,
 	}
 }
 
@@ -159,23 +171,34 @@ func NewClientConfigForm(cfg *config.Config) *ConfigFormModel {
 			huh.NewInput().
 				Title("服务器地址").
 				Description("FRP 服务端的 IP 地址或域名").
-				Placeholder("127.0.0.1 或 your-server.com").
+				Placeholder("如: 123.456.789.123 或 your-server.com (本地测试填 127.0.0.1)").
 				Value(&serverAddr).
 				Validate(func(str string) error {
 					if strings.TrimSpace(str) == "" {
 						return fmt.Errorf("服务器地址不能为空")
+					}
+					// 简单的IP或域名格式检查
+					str = strings.TrimSpace(str)
+					if str == "localhost" || str == "127.0.0.1" {
+						return nil // 本地地址总是有效的
+					}
+					// 检查是否包含非法字符
+					if strings.Contains(str, " ") {
+						return fmt.Errorf("服务器地址不能包含空格")
 					}
 					return nil
 				}),
 
 			huh.NewInput().
 				Title("服务器端口").
-				Description("FRP 服务端监听端口").
+				Description("FRP 服务端监听端口 (默认: 7000)").
 				Placeholder("7000").
 				Value(&serverPort).
 				Validate(func(str string) error {
+					// 如果为空，设置默认值
 					if str == "" {
-						return fmt.Errorf("服务器端口不能为空")
+						serverPort = "7000"
+						return nil
 					}
 					port, err := strconv.Atoi(str)
 					if err != nil {
@@ -189,8 +212,8 @@ func NewClientConfigForm(cfg *config.Config) *ConfigFormModel {
 
 			huh.NewInput().
 				Title("认证令牌 (可选)").
-				Description("服务端设置的认证令牌，需与服务端一致").
-				Placeholder("your_secure_token_here").
+				Description("服务端设置的认证令牌，需与服务端一致。如果服务端未设置可留空").
+				Placeholder("留空表示无认证").
 				Value(&token),
 		).Title("🔧 服务器连接配置"),
 
@@ -255,27 +278,35 @@ func NewProxyConfigForm(proxy *config.ProxyConfig) *ConfigFormModel {
 		huh.NewGroup(
 			huh.NewInput().
 				Title("代理名称").
-				Description("代理的唯一标识名称").
-				Placeholder("my-proxy").
+				Description("代理的唯一标识名称 (建议使用有意义的名称，如: web-server, ssh-tunnel)").
+				Placeholder("web-server").
 				Value(&name).
 				Validate(func(str string) error {
-					if strings.TrimSpace(str) == "" {
+					str = strings.TrimSpace(str)
+					if str == "" {
 						return fmt.Errorf("代理名称不能为空")
+					}
+					// 检查名称格式
+					if strings.Contains(str, " ") {
+						return fmt.Errorf("代理名称不能包含空格，建议使用连字符")
+					}
+					if len(str) < 2 {
+						return fmt.Errorf("代理名称至少需要2个字符")
 					}
 					return nil
 				}),
 
 			huh.NewSelect[string]().
 				Title("代理类型").
-				Description("选择代理协议类型").
+				Description("选择代理协议类型 (TCP最常用，HTTP用于网站)").
 				Options(
-					huh.NewOption("TCP", "tcp"),
-					huh.NewOption("UDP", "udp"),
-					huh.NewOption("HTTP", "http"),
-					huh.NewOption("HTTPS", "https"),
-					huh.NewOption("STCP (安全TCP)", "stcp"),
-					huh.NewOption("SUDP (安全UDP)", "sudp"),
-					huh.NewOption("XTCP (点对点TCP)", "xtcp"),
+					huh.NewOption("TCP - 通用端口转发 (推荐)", "tcp"),
+					huh.NewOption("HTTP - 网站代理", "http"),
+					huh.NewOption("HTTPS - 安全网站代理", "https"),
+					huh.NewOption("UDP - UDP协议转发", "udp"),
+					huh.NewOption("STCP - 安全TCP (需要密钥)", "stcp"),
+					huh.NewOption("SUDP - 安全UDP (需要密钥)", "sudp"),
+					huh.NewOption("XTCP - 点对点TCP (需要密钥)", "xtcp"),
 				).
 				Value(&proxyType),
 
@@ -287,7 +318,7 @@ func NewProxyConfigForm(proxy *config.ProxyConfig) *ConfigFormModel {
 
 			huh.NewInput().
 				Title("本地端口").
-				Description("要代理的本地服务端口").
+				Description("要代理的本地服务端口 (如: 22=SSH, 80=HTTP, 3389=RDP, 8080=Web服务)").
 				Placeholder("8080").
 				Value(&localPort).
 				Validate(func(str string) error {
@@ -300,6 +331,21 @@ func NewProxyConfigForm(proxy *config.ProxyConfig) *ConfigFormModel {
 					}
 					if port < 1 || port > 65535 {
 						return fmt.Errorf("端口必须在 1-65535 范围内")
+					}
+					// 提供常用端口的友好提示
+					commonPorts := map[int]string{
+						22:   "SSH",
+						80:   "HTTP",
+						443:  "HTTPS",
+						3389: "远程桌面",
+						5432: "PostgreSQL",
+						3306: "MySQL",
+						6379: "Redis",
+						8080: "Web服务",
+					}
+					if service, exists := commonPorts[port]; exists {
+						// 这里可以添加提示，但huh库的验证函数只能返回错误
+						_ = service // 避免未使用变量警告
 					}
 					return nil
 				}),
@@ -529,10 +575,81 @@ func (m *ConfigFormModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // updateConfigFromForm 从表单更新配置
 func (m *ConfigFormModel) updateConfigFromForm() {
-	// huh 库通过 Value(&variable) 绑定到变量，表单完成时自动更新变量值
-	// 由于变量是在表单创建函数中的局部变量，这里暂时无法直接同步
-	// 实际的数据同步需要在 ConfigTab 中完成，通过重新获取表单数据
-	// TODO: 考虑重构表单数据绑定方式以支持更好的数据同步
+	if m.config == nil || m.formData == nil {
+		return
+	}
+
+	switch m.formType {
+	case ServerConfigForm:
+		// 更新服务端配置
+		if bindPort := *m.formData["bindPort"]; bindPort != "" {
+			if port, err := strconv.Atoi(bindPort); err == nil {
+				m.config.BindPort = port
+			}
+		}
+		m.config.Token = *m.formData["token"]
+		m.config.WebServer.Addr = *m.formData["webAddr"]
+		if webPort := *m.formData["webPort"]; webPort != "" {
+			if port, err := strconv.Atoi(webPort); err == nil {
+				m.config.WebServer.Port = port
+			}
+		}
+		m.config.WebServer.User = *m.formData["webUser"]
+		m.config.WebServer.Password = *m.formData["webPassword"]
+		m.config.Log.To = *m.formData["logTo"]
+		m.config.Log.Level = *m.formData["logLevel"]
+
+	case ClientConfigForm:
+		// 更新客户端配置
+		m.config.ServerAddr = *m.formData["serverAddr"]
+		if serverPort := *m.formData["serverPort"]; serverPort != "" {
+			if port, err := strconv.Atoi(serverPort); err == nil {
+				m.config.ServerPort = port
+			}
+		}
+		m.config.Token = *m.formData["token"]
+		m.config.Log.To = *m.formData["logTo"]
+		m.config.Log.Level = *m.formData["logLevel"]
+
+	case ProxyConfigForm:
+		// 更新代理配置
+		if m.proxyConfig == nil {
+			return
+		}
+		m.proxyConfig.Name = *m.formData["name"]
+		m.proxyConfig.Type = *m.formData["proxyType"]
+		m.proxyConfig.LocalIP = *m.formData["localIP"]
+		if localPort := *m.formData["localPort"]; localPort != "" {
+			if port, err := strconv.Atoi(localPort); err == nil {
+				m.proxyConfig.LocalPort = port
+			}
+		}
+		if remotePort := *m.formData["remotePort"]; remotePort != "" {
+			if port, err := strconv.Atoi(remotePort); err == nil {
+				m.proxyConfig.RemotePort = port
+			}
+		}
+		if customDomains := *m.formData["customDomains"]; customDomains != "" {
+			m.proxyConfig.CustomDomains = strings.Split(customDomains, ",")
+		}
+		m.proxyConfig.SecretKey = *m.formData["secretKey"]
+
+	case VisitorConfigForm:
+		// 更新访问者配置
+		if m.visitorConfig == nil {
+			return
+		}
+		m.visitorConfig.Name = *m.formData["name"]
+		m.visitorConfig.Type = *m.formData["visitorType"]
+		m.visitorConfig.ServerName = *m.formData["serverName"]
+		m.visitorConfig.SecretKey = *m.formData["secretKey"]
+		m.visitorConfig.BindAddr = *m.formData["bindAddr"]
+		if bindPort := *m.formData["bindPort"]; bindPort != "" {
+			if port, err := strconv.Atoi(bindPort); err == nil {
+				m.visitorConfig.BindPort = port
+			}
+		}
+	}
 }
 
 // View 渲染表单视图

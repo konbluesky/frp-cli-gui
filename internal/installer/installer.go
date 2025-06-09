@@ -35,9 +35,13 @@ type InstallStatus struct {
 // NewInstaller 创建新的安装管理器
 func NewInstaller(installDir string) *Installer {
 	if installDir == "" {
-		// 默认安装到用户目录下的 .frp 文件夹
+		// 默认安装到用户目录下的 .frp-manager 文件夹，与配置目录保持一致
 		homeDir, _ := os.UserHomeDir()
-		installDir = filepath.Join(homeDir, ".frp")
+		if homeDir != "" {
+			installDir = filepath.Join(homeDir, ".frp-manager")
+		} else {
+			installDir = ".frp-manager"
+		}
 	}
 
 	return &Installer{

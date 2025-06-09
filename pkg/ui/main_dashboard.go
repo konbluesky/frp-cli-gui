@@ -235,9 +235,14 @@ func (m *MainDashboard) getProxyList() []ProxyStatus {
 	result := make([]ProxyStatus, len(proxies))
 	for i, proxy := range proxies {
 		result[i] = ProxyStatus{
-			Name:   proxy.Name,
-			Type:   proxy.Conf.Type,
-			Status: proxy.Status,
+			Name:            proxy.Name,
+			Type:            proxy.Conf.Type,
+			Status:          proxy.Status,
+			CurConns:        proxy.CurConns,
+			TodayTrafficIn:  proxy.TodayTrafficIn,
+			TodayTrafficOut: proxy.TodayTrafficOut,
+			ClientVersion:   proxy.ClientVersion,
+			LastStartTime:   proxy.LastStartTime,
 		}
 
 		if proxy.Conf.LocalIP != "" {

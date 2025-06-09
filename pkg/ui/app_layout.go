@@ -91,7 +91,15 @@ func (al *AppLayout) Render() string {
 
 	// 主内容
 	if al.config.MainContent != "" {
-		components = append(components, al.config.MainContent)
+		// 为主内容添加边框
+		contentStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(al.config.BorderColor)).
+			Padding(1).
+			Width(al.width - 8) // 减去外层边框和内边距
+
+		styledContent := contentStyle.Render(al.config.MainContent)
+		components = append(components, styledContent)
 	}
 
 	// 组合内容
